@@ -1,0 +1,6 @@
+{
+  "name": "PixelPerfect Workspace",
+  "description": "Gestión del tiempo, salud de clientes y control de proyectos para diseñadores y creadores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Theme colors - Creative Cognitive Logic */
+  --color-primary-coral: #a43b2f;
+  --color-primary-container-coral: #ff7f6e;
+  --color-on-primary-coral: #ffffff;
+  --color-secondary-teal: #006b5f;
+  --color-secondary-container-teal: #62fae3;
+  --color-on-secondary-teal: #ffffff;
+  --color-tertiary-violet: #674bb5;
+  --color-tertiary-container-violet: #af94ff;
+  --color-background-slate: #f8f9ff;
+  --color-surface-container: #e6eeff;
+  --color-on-surface: #0d1c2e;
+  --color-outline-custom: #8a716e;
+}
+
+body {
+  background-color: var(--color-background-slate);
+  color: var(--color-on-surface);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Custom styles for animations or widgets */
+.progress-ring__circle {
+  transition: stroke-dashoffset 0.35s;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+
