@@ -12,7 +12,7 @@ export interface Project {
 export interface ClientFinancialRow {
   id_cliente: string;
   nombre_cliente: string;
-  esquema_cobro: 'por_hora' | 'fijo';
+  esquema_cobro: 'por_hora' | 'fijo' | 'suscripcion';
   nombre_proyecto: string;
   horas_totales: number;
   horas_admin: number;

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { AlertTriangle, Smile, Send, CheckCircle2, ChevronRight, UserCheck, BarChart2, Plus, MessageSquarePlus, BellRing, Upload, AlertCircle, FileText, Check, Copy } from 'lucide-react';
+import { AlertTriangle, Smile, Send, CheckCircle2, ChevronRight, UserCheck, BarChart2, Plus, MessageSquarePlus, BellRing, Upload, AlertCircle, FileText, Check, Copy, Sparkles } from 'lucide-react';
 import { Feedback, AlertItem, ClientFinancialRow } from '../types';
 import { formatCLP } from '../utils';
 
@@ -11,9 +11,10 @@ interface ClientesProps {
   setScreen: (screen: 'mi-espacio' | 'mi-dia' | 'proyectos' | 'clientes', transition?: 'none' | 'push' | 'push_back') => void;
   financials: ClientFinancialRow[];
   setFinancials: React.Dispatch<React.SetStateAction<ClientFinancialRow[]>>;
+  onExportCSVReport: () => void;
 }
 
-export default function Clientes({ alerts, feedbacks, onAddFeedback, onResolveAlert, setScreen, financials, setFinancials }: ClientesProps) {
+export default function Clientes({ alerts, feedbacks, onAddFeedback, onResolveAlert, setScreen, financials, setFinancials, onExportCSVReport }: ClientesProps) {
   const [showModal, setShowModal] = useState(false);
   const [clientName, setClientName] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
@@ -26,6 +27,12 @@ export default function Clientes({ alerts, feedbacks, onAddFeedback, onResolveAl
   const [csvSuccess, setCsvSuccess] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Intelligent CSV Validation & Merge States
+  const [pendingParsedRows, setPendingParsedRows] = useState<any[]>([]);
+  const [csvErrors, setCsvErrors] = useState<{ rowIndex: number; columnName: string; originalValue: string; errorDescription: string }[]>([]);
+  const [showDiagnosticModal, setShowDiagnosticModal] = useState(false);
+  const [showMergeChoiceModal, setShowMergeChoiceModal] = useState(false);
+
   // Chart state for hover tooltips
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
 
@@ -37,10 +44,10 @@ c3,Nexus Cloud,fijo,Branding Corporativo,30,12,800000,50000,800000,pendiente
 c4,SaaSify,por_hora,SaaS Dashboard,40,5,35000,120000,1400000,pagado
 c5,Rincón Orgánico,fijo,E-commerce Shopify,55,15,2000000,200000,2000000,pendiente`;
 
-  // Parse CSV function
+  // Parse CSV function with Deep Auditing
   const parseCSVData = (text: string) => {
     try {
-      const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+      const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
       if (lines.length < 2) {
         throw new Error('El archivo CSV está vacío o le faltan registros.');
       }
@@ -59,47 +66,169 @@ c5,Rincón Orgánico,fijo,E-commerce Shopify,55,15,2000000,200000,2000000,pendie
         throw new Error(`Columnas faltantes en el CSV: ${missing.join(', ')}`);
       }
 
-      const newRows: ClientFinancialRow[] = [];
+      const rawRows: any[] = [];
+      const errors: { rowIndex: number; columnName: string; originalValue: string; errorDescription: string }[] = [];
 
       for (let i = 1; i < lines.length; i++) {
-        // Simple comma split
         const values = lines[i].split(',').map(v => v.trim());
         if (values.length < headers.length) continue;
 
-        // Build object
         const rowObj: any = {};
         headers.forEach((header, idx) => {
           rowObj[header] = values[idx];
         });
 
-        // Validation & coercion
-        const entry: ClientFinancialRow = {
-          id_cliente: rowObj.id_cliente || `c-${Date.now()}-${i}`,
-          nombre_cliente: rowObj.nombre_cliente || 'Cliente Anónimo',
-          esquema_cobro: rowObj.esquema_cobro === 'por_hora' ? 'por_hora' : 'fijo',
-          nombre_proyecto: rowObj.nombre_proyecto || 'Proyecto General',
-          horas_totales: Number(rowObj.horas_totales) || 0,
-          horas_admin: Number(rowObj.horas_admin) || 0,
-          tarifa_pactada: Number(rowObj.tarifa_pactada) || 0,
-          costos_directos: Number(rowObj.costos_directos) || 0,
-          facturado_mes: Number(rowObj.facturado_mes) || 0,
-          estatus_pago: rowObj.estatus_pago === 'pendiente' ? 'pendiente' : 'pagado'
-        };
+        const rowNum = i + 1;
 
-        newRows.push(entry);
+        // Perform Audits
+        if (!rowObj.id_cliente) {
+          errors.push({
+            rowIndex: rowNum,
+            columnName: 'id_cliente',
+            originalValue: '',
+            errorDescription: 'El identificador unico (id_cliente) no puede estar vacío.'
+          });
+        }
+        if (!rowObj.nombre_cliente) {
+          errors.push({
+            rowIndex: rowNum,
+            columnName: 'nombre_cliente',
+            originalValue: '',
+            errorDescription: 'El campo de nombre del cliente está vacío.'
+          });
+        }
+        if (rowObj.esquema_cobro !== 'por_hora' && rowObj.esquema_cobro !== 'fijo' && rowObj.esquema_cobro !== 'suscripcion') {
+          errors.push({
+            rowIndex: rowNum,
+            columnName: 'esquema_cobro',
+            originalValue: rowObj.esquema_cobro || 'vacío',
+            errorDescription: 'Esquema de cobro inválido (valores permitidos: "por_hora", "fijo" o "suscripcion").'
+          });
+        }
+        if (rowObj.estatus_pago !== 'pendiente' && rowObj.estatus_pago !== 'pagado') {
+          errors.push({
+            rowIndex: rowNum,
+            columnName: 'estatus_pago',
+            originalValue: rowObj.estatus_pago || 'vacío',
+            errorDescription: 'Estatus de facturación inválido (debe ser "pendiente" o "pagado").'
+          });
+        }
+
+        // Numeric audits
+        const numericColumns = ['horas_totales', 'horas_admin', 'tarifa_pactada', 'costos_directos', 'facturado_mes'];
+        numericColumns.forEach(col => {
+          const rawVal = rowObj[col];
+          const hasError = rawVal === undefined || rawVal === '' || isNaN(Number(rawVal)) || Number(rawVal) < 0;
+          if (hasError) {
+            errors.push({
+              rowIndex: rowNum,
+              columnName: col,
+              originalValue: rawVal || 'vacío',
+              errorDescription: `El valor numérico "${rawVal || ''}" es inválido o negativo.`
+            });
+          }
+        });
+
+        rawRows.push({ ...rowObj, rowIndex: rowNum });
       }
 
-      if (newRows.length === 0) {
-        throw new Error('No se pudieron parsear registros válidos.');
+      if (rawRows.length === 0) {
+        throw new Error('No se encontraron filas válidas en el documento.');
       }
 
-      setFinancials(newRows);
-      setCsvSuccess(`¡Éxito! Procesados ${newRows.length} clientes del archivo CSV.`);
+      setPendingParsedRows(rawRows);
+      setCsvErrors(errors);
+
+      if (errors.length > 0) {
+        setShowDiagnosticModal(true);
+      } else {
+        // Safe to direct merge screen
+        setShowMergeChoiceModal(true);
+      }
       setCsvError(null);
     } catch (err: any) {
       setCsvError(err.message || 'Ocurrió un error al procesar el archivo CSV.');
       setCsvSuccess(null);
     }
+  };
+
+  // Autocorrect Strategy Handler
+  const handleAutoCorrectAndProceed = () => {
+    const cleaned: ClientFinancialRow[] = pendingParsedRows.map(row => {
+      return {
+        id_cliente: row.id_cliente || `c-auto-${Math.random().toString(36).substr(2, 5)}`,
+        nombre_cliente: row.nombre_cliente || 'Cliente Temporal',
+        esquema_cobro: (row.esquema_cobro === 'por_hora' || row.esquema_cobro === 'fijo' || row.esquema_cobro === 'suscripcion') ? row.esquema_cobro : 'fijo',
+        nombre_proyecto: row.nombre_proyecto || 'Proyecto General',
+        horas_totales: isNaN(Number(row.horas_totales)) || Number(row.horas_totales) < 0 ? 0 : Number(row.horas_totales),
+        horas_admin: isNaN(Number(row.horas_admin)) || Number(row.horas_admin) < 0 ? 0 : Number(row.horas_admin),
+        tarifa_pactada: isNaN(Number(row.tarifa_pactada)) || Number(row.tarifa_pactada) < 0 ? 0 : Number(row.tarifa_pactada),
+        costos_directos: isNaN(Number(row.costos_directos)) || Number(row.costos_directos) < 0 ? 0 : Number(row.costos_directos),
+        facturado_mes: isNaN(Number(row.facturado_mes)) || Number(row.facturado_mes) < 0 ? 0 : Number(row.facturado_mes),
+        estatus_pago: (row.estatus_pago === 'pendiente' || row.estatus_pago === 'pagado') ? row.estatus_pago : 'pendiente',
+      };
+    });
+
+    setPendingParsedRows(cleaned);
+    setCsvErrors([]);
+    setShowDiagnosticModal(false);
+    setShowMergeChoiceModal(true);
+  };
+
+  // Discard Problematic Lines Strategy Handler
+  const handleIgnoreErrorsAndProceed = () => {
+    const errorRows = new Set(csvErrors.map(e => e.rowIndex));
+    const pruned = pendingParsedRows
+      .filter(row => !errorRows.has(row.rowIndex))
+      .map(row => {
+        return {
+          id_cliente: row.id_cliente,
+          nombre_cliente: row.nombre_cliente,
+          esquema_cobro: row.esquema_cobro,
+          nombre_proyecto: row.nombre_proyecto,
+          horas_totales: Number(row.horas_totales) || 0,
+          horas_admin: Number(row.horas_admin) || 0,
+          tarifa_pactada: Number(row.tarifa_pactada) || 0,
+          costos_directos: Number(row.costos_directos) || 0,
+          facturado_mes: Number(row.facturado_mes) || 0,
+          estatus_pago: row.estatus_pago,
+        } as ClientFinancialRow;
+      });
+
+    if (pruned.length === 0) {
+      setCsvError('No quedaron filas en el dataset después de eliminar las erróneas.');
+      setShowDiagnosticModal(false);
+      return;
+    }
+
+    setPendingParsedRows(pruned);
+    setCsvErrors([]);
+    setShowDiagnosticModal(false);
+    setShowMergeChoiceModal(true);
+  };
+
+  // DB Overwrite Confirmation Handler
+  const handleOverwriteConfirm = () => {
+    setFinancials(pendingParsedRows);
+    setCsvSuccess(`¡Sobrescrito! Se ha configurado tu workspace con el CSV contable analizado.`);
+    setCsvError(null);
+    setShowMergeChoiceModal(false);
+    setPendingParsedRows([]);
+  };
+
+  // DB Incremental Merge Confirmation Handler
+  const handleIncrementalMergeConfirm = () => {
+    setFinancials(prev => {
+      const dbMap = new Map(prev.map(p => [p.id_cliente, p]));
+      pendingParsedRows.forEach(row => {
+        dbMap.set(row.id_cliente, row);
+      });
+      return Array.from(dbMap.values());
+    });
+    setCsvSuccess(`¡Integrado! ${pendingParsedRows.length} clientes añadidos o actualizados en tu base de datos.`);
+    setCsvError(null);
+    setShowMergeChoiceModal(false);
+    setPendingParsedRows([]);
   };
 
   // Drag handlers
@@ -211,19 +340,17 @@ c5,Rincón Orgánico,fijo,E-commerce Shopify,55,15,2000000,200000,2000000,pendie
   return (
     <div className="max-w-xl mx-auto px-4 pt-6 pb-28 animate-fade-in space-y-6">
       
-      {/* Editorial Header Logo */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-200/50">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-primary-coral flex items-center justify-center font-bold text-white shadow-sm select-none">
-            P
-          </div>
-          <span className="font-sans font-black text-xl tracking-tight text-slate-800">
-            Pixel<span className="text-secondary-teal">Perfect</span>
-          </span>
-        </div>
-        <div className="w-8 h-8 rounded-full bg-slate-250 overflow-hidden flex items-center justify-center font-bold text-xs text-slate-600 border border-slate-200/60">
-          LC
-        </div>
+      {/* Interactive Top Actions Hub */}
+      <div className="flex items-center justify-between pb-3 border-b border-slate-200/50">
+        <span className="text-[10px] font-black tracking-widest text-slate-400 uppercase">
+          Base de Datos Contable
+        </span>
+        <button
+          onClick={onExportCSVReport}
+          className="flex items-center gap-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 py-1.5 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-xs transition-all cursor-pointer active:scale-95"
+        >
+          <FileText className="w-3.5 h-3.5 text-primary-coral" /> Exportar Reporte Mensual
+        </button>
       </div>
 
       {/* Screen Title */}
@@ -232,7 +359,7 @@ c5,Rincón Orgánico,fijo,E-commerce Shopify,55,15,2000000,200000,2000000,pendie
           Gestión y Carga de Clientes
         </h1>
         <p className="text-sm text-slate-500 font-medium font-sans">
-          Arrastra el archivo CSV de tu contabilidad para recalcular inmediatamente los KPIS del dashboard.
+          Arrastra tu planilla contable para auditar errores, corregir anomalías y actualizar tus proyectos.
         </p>
       </div>
 
@@ -559,6 +686,154 @@ c5,Rincón Orgánico,fijo,E-commerce Shopify,55,15,2000000,200000,2000000,pendie
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* CSV DIAGNOSTIC AND CORRECTION MODAL (Intelligent Auditing) */}
+      {showDiagnosticModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white w-full max-w-lg rounded-3xl p-6 shadow-2xl border border-slate-150 space-y-5 animate-scale-up max-h-[90vh] flex flex-col justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2.5 pb-2.5 border-b border-slate-100">
+                <div className="w-9 h-9 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center animate-pulse">
+                  <AlertCircle className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 leading-tight">
+                    Diagnóstico de Calidad: {csvErrors.length} alerta{csvErrors.length > 1 ? 's' : ''} encontrada{csvErrors.length > 1 ? 's' : ''}
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                    Auditor de Integridad de Planilla
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-slate-600 font-sans leading-relaxed">
+                El motor de análisis de PixelPerfect detectó campos faltantes o valores erróneos en el archivo. Puedes resolverlos automáticamente ahora o ignorar los registros que contienen fallas.
+              </p>
+            </div>
+
+            {/* List of discrepancies */}
+            <div className="flex-1 overflow-y-auto bg-slate-50 border border-slate-200/60 rounded-2xl p-4 gap-2 space-y-2.5 max-h-[300px]">
+              <div className="grid grid-cols-1 divide-y divide-slate-150 text-[11px]">
+                {csvErrors.map((error, idx) => (
+                  <div key={idx} className="py-2.5 first:pt-0 last:pb-0 flex flex-col gap-1 font-sans">
+                    <div className="flex justify-between items-center font-semibold">
+                      <span className="text-[#a43b2f] uppercase tracking-wider text-[9px] bg-red-50 border border-red-200/10 px-1.5 py-0.5 rounded">
+                        Fila {error.rowIndex} • {error.columnName}
+                      </span>
+                      <span className="text-slate-400 font-mono">Valor: "{error.originalValue}"</span>
+                    </div>
+                    <p className="text-slate-700 italic font-medium">
+                      {error.errorDescription}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Actions Panel */}
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={handleAutoCorrectAndProceed}
+                className="w-full bg-gradient-to-tr from-secondary-teal to-teal-500 text-white font-black text-xs uppercase tracking-wider py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-secondary-teal/20 transition-all hover:opacity-95 active:scale-98"
+              >
+                <Sparkles className="w-4 h-4" /> Corregir automáticamente
+              </button>
+              
+              <div className="grid grid-cols-2 gap-3.5">
+                <button
+                  type="button"
+                  onClick={handleIgnoreErrorsAndProceed}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-wide py-3 px-3 rounded-xl transition-all cursor-pointer"
+                >
+                  Ignorar esas filas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDiagnosticModal(false);
+                    setPendingParsedRows([]);
+                  }}
+                  className="border border-slate-250 hover:bg-slate-50 text-slate-500 font-black text-[10px] uppercase tracking-wide py-3 px-3 rounded-xl transition-all cursor-pointer"
+                >
+                  Cancelar carga
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CSV MERGE & DB WRITE OPTIONS MODAL (Incremental Database Option) */}
+      {showMergeChoiceModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl border border-slate-150 space-y-6 animate-scale-up">
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 rounded-full bg-emerald-50 text-secondary-teal flex items-center justify-center mx-auto mb-2 shadow-inner">
+                <Check className="w-6 h-6 text-emerald-600 stroke-[3px]" />
+              </div>
+              <h3 className="text-lg font-black text-slate-900 leading-tight">
+                Integración de Base de Datos
+              </h3>
+              <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                El archivo de clientes es válido. Selecciona la estrategia de persistencia para guardar los cambios:
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {/* Option 1: Incremental Update */}
+              <button
+                type="button"
+                onClick={handleIncrementalMergeConfirm}
+                className="w-full text-left bg-slate-50 hover:bg-slate-100 p-4 border border-slate-200 rounded-2xl transition-all flex items-start gap-3 cursor-pointer group"
+              >
+                <div className="w-8 h-8 rounded-full bg-secondary-container-teal/40 text-secondary-teal flex items-center justify-center shrink-0 font-bold text-sm">
+                  ⚡
+                </div>
+                <div>
+                  <span className="block text-xs font-black text-slate-800">
+                    Actualizar e Integrar (Recomendado)
+                  </span>
+                  <p className="text-[10px] text-slate-550 mt-1">
+                    Carga e integra nuevos clientes a tu base de datos actual. Si el ID ya existe, se actualiza la facturación.
+                  </p>
+                </div>
+              </button>
+
+              {/* Option 2: Full Overwrite */}
+              <button
+                type="button"
+                onClick={handleOverwriteConfirm}
+                className="w-full text-left bg-rose-50/20 hover:bg-rose-50/50 p-4 border border-rose-100 rounded-2xl transition-all flex items-start gap-3 cursor-pointer group"
+              >
+                <div className="w-8 h-8 rounded-full bg-red-100 text-red-700 flex items-center justify-center shrink-0 font-bold text-sm">
+                  🗑
+                </div>
+                <div>
+                  <span className="block text-xs font-black text-slate-800">
+                    Sobrescribir los datos actuales
+                  </span>
+                  <p className="text-[10px] text-slate-550 mt-1">
+                    Elimina todos los clientes de tu base de datos actual y los reemplaza por completo por el nuevo listado.
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMergeChoiceModal(false);
+                  setPendingParsedRows([]);
+                }}
+                className="text-[10px] font-black text-slate-400 hover:text-slate-650 uppercase tracking-widest cursor-pointer"
+              >
+                Volver atrás
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
